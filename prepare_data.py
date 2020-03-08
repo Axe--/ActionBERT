@@ -8,18 +8,23 @@ Input CSV Format:
 `video_name, label_idx`
 
 Output JSON Format:
-`video_idx, video_name, video_length, label_idx`
+{
+    'data':
+        [{'video_idx', 'video_name', 'video_length', 'label_idx'}],
 
-Computes embeddings from frame images (saved as numpy file).
+    'memmap_size': tuple[int, int, int]     # (total_videos, max_video_len, emb_dim)
+}
 
+Computes embeddings from frame images (saved as numpy file):
 - shape=[num_videos, max_frames, embedding_dim]
 
-The video-index in csv file corresponds to the
-embedding array's 0th axis (in npy).
+The `video_idx` in json file corresponds to the
+embedding array's 0th axis (npy).
 
 """
 import os
 import glob
+import json
 import argparse
 import numpy as np
 import pandas as pd
@@ -64,7 +69,7 @@ class VideoFramesDataset(Dataset):
         self.transform = transform
 
         # Setup dataset (frame-path, label)
-        self.frame_paths, self.labels = self.construct_dataset()
+        self.frame_paths, self.labels = self.setup_data()
 
         # No. of frames per video
         self.num_frames = self.df['video_length'].tolist()
@@ -83,7 +88,7 @@ class VideoFramesDataset(Dataset):
 
         return image
 
-    def construct_dataset(self):
+    def setup_data(self):
         """
         Given the video frames directory, compute the
         absolute paths to frames, along with corresponding labels
@@ -96,17 +101,17 @@ class VideoFramesDataset(Dataset):
         label_idxs = self.df['label_idx'].tolist()
 
         # output data
-        frames = []
-        labels = []
+        frame_path_list = []
+        label_idx_list = []
 
         for video, n_frame, label in zip(video_names, num_frames, label_idxs):
             # Read frames
             frame_paths = sorted(glob.glob(os.path.join(self.root_dir, video, '*')))
 
-            frames += frame_paths
-            labels += [label] * n_frame
+            frame_path_list += frame_paths
+            label_idx_list += [label] * n_frame
 
-        return frames, labels
+        return frame_path_list, label_idx_list
 
 
 def _count_frames(folder, root_dir):
@@ -141,18 +146,13 @@ if __name__ == '__main__':
     # Read csv (video_name, label)
     df = pd.read_csv(args.csv_file)
 
-    total_videos = df['video_name'].count()
+    total_videos = int(df['video_name'].count())
 
     # Add video index column (to be utilized by json)
     df['video_idx'] = range(total_videos)
 
     # Compute the sequence length (no. of frames) for each video (row)
     df['video_length'] = df['video_name'].apply(lambda x: _count_frames(x, args.frames_dir))
-
-    # Save JSON with following fields - {'video_idx', 'video_name', 'video_length', 'label_idx'}
-    df.to_json(args.json_file, orient='records')
-
-    print('Dataset processed json saved at {}'.format(args.json_file))
 
     # Image Mean & Std-Dev for Normalization
     mean = np.array([0.485, 0.456, 0.406])
@@ -162,7 +162,7 @@ if __name__ == '__main__':
     # dataset = VideoFramesDataset(args.frames_dir, df, Compose([Resize((224, 224)), ToTensor()]))    # for sanity check
 
     # Compute the max sequence length, needed for embedding array - [N, F, D]
-    max_video_len = df['video_length'].max()
+    max_video_len = int(df['video_length'].max())
     total_frames = dataset.__len__()
 
     print('Total Videos: {}  |  Total Frames: {}  |  Max Video length: {}'.
@@ -176,6 +176,18 @@ if __name__ == '__main__':
 
     temp_emb_file = args.emb_file.split('.')[0] + '_temp.npy'
     final_emb_file = args.emb_file
+
+    # Save JSON
+    data = df.to_json(orient='records')     # {'video_idx', 'video_name', 'video_length', 'label_idx'}
+    memmap_shape = (total_videos, max_video_len, emb_dim)
+
+    print('Processed json saved at {}'.format(args.json_file))
+
+    json_data = dict(data=data,
+                     memmap_shape=memmap_shape)
+
+    with open(args.json_file, "w") as f:
+        json.dump(json_data, f)
 
     # Embeddings [num_videos * frames_per_video, emb_dim]
     embeddings_temp = np.memmap(temp_emb_file, 'float32', 'w+', shape=(total_frames, emb_dim))
@@ -195,7 +207,7 @@ if __name__ == '__main__':
         i += batch_size
 
     # Reshape the embeddings array
-    embeddings_final = np.memmap(final_emb_file, 'float32', 'w+', shape=(total_videos, max_video_len, emb_dim))
+    embeddings_final = np.memmap(final_emb_file, 'float32', 'w+', shape=memmap_shape)
 
     j = 0
     for video_idx, video_len in enumerate(video_lengths):

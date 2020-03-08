@@ -2,24 +2,21 @@ import torch
 import torch.nn as nn
 import argparse
 import os
-import sys
 import apex.amp as amp
 from time import time
 from torch.utils.data import DataLoader
 from tensorboardX import SummaryWriter
-from os.path import dirname, abspath
-parent_dir = dirname(dirname(abspath(__file__)))
-sys.path.insert(0, parent_dir)
+from dataloader import ActionDataset
+from model import BiLSTM
 from utils import str2bool, print_and_log, setup_logs_file
 from utils import compute_validation_metrics
-from Video_QA.dataloader_VQA import VQA_Dataset
-from Video_QA.model_VQA import VideoQAMidFuseBaseline
 
 """
 Train + Val:
-python3 main_VQA.py --mode train --expt_dir /home/axe/Projects/MM_BERT_QA/results_log --expt_name caer 
---train_dir /home/axe/Datasets/CAER_S_Dataset/train --val_dir /home/axe/Datasets/CAER_S_Dataset/test --val_size 8000 
---run_name res18_frz3 --model resnet18 --epochs 20 --gpu_id 0 --opt_lvl 1 --num_workers 1 --batch_size 8
+python3 main.py --mode train --expt_dir /home/axe/Projects/ActionBERT/results_log \
+--expt_name BiLSTM --model bilstm --data_dir /home/axe/Datasets/UCF_101/ --train_npy train_1_fps_res18.npy \
+--train_json train_1_fps.json --val_npy val_1_fps_res18.npy --val_json val_1_fps.json \
+--num_layers 1 --batch_size 8 --epochs 1 --gpu_id 1 --opt_lvl 1 --run_name demo --num_workers 1
 
 Test:
 """
@@ -35,25 +32,18 @@ def main():
     parser.add_argument('--run_name',       type=str,       help='expt_dir/expt_name/run_name: organize training runs', required=True)
 
     # Model params
-    parser.add_argument('--tokenizer_name', type=str,       help='which huggingface tokenizer', required=True)
-    parser.add_argument('--config_name',    type=str,       help='which huggingface config', required=True)
-    parser.add_argument('--enc_freeze',     type=str2bool,  help='freeze transformer encoder', default='True')
-    parser.add_argument('--vid_emb_dim',    type=int,       help='video embedding size (same as in prepare data)', required=True)
+    parser.add_argument('--model',          type=str,       help='RNN vs Transformer', required=True, choices=['bilstm', 'bert'])
+    parser.add_argument('--num_layers',     type=int,       help='no. of layers in the RNN/Transformer', default=1)
+    parser.add_argument('--num_cls',        type=int,       help='no. of classes (for UCF-101)', default=101)
     parser.add_argument('--model_ckpt',     type=str,       help='resume train / perform inference; e.g. model_100.pth')
 
     # Data params
-    parser.add_argument('--data_dir',           type=str,       help='root dir containing all data files', required=True)
-    parser.add_argument('--train_npy',          type=str,       help='train npy filename', required=True)
-    parser.add_argument('--train_json',         type=str,       help='train json filename', required=True)
-    parser.add_argument('--max_num_frames',     type=int,       help='max number of frames per video', default=120)
-    parser.add_argument('--train_memmap_size',  type=str2tuple, help='shape of memmap train npy', default=None)
-    parser.add_argument('--val_npy',            type=str,       help='val npy filename')
-    parser.add_argument('--val_json',           type=str,       help='val json filename')
-    parser.add_argument('--val_memmap_size',    type=str2tuple, help='shape of memmap val npy', default=None)
-    parser.add_argument('--test_npy',           type=str,       help='test npy filename')
-    parser.add_argument('--test_json',          type=str,       help='test json filename')
-    parser.add_argument('--test_memmap_size',   type=str2tuple, help='shape of memmap test npy', default=None)
-    parser.add_argument('--pred_output',        type=str,       help='prediction file (label, pred) pair on each line')
+    parser.add_argument('--data_dir',       type=str,       help='root dir containing all data files', required=True)
+    parser.add_argument('--train_npy',      type=str,       help='train npy filename', required=True)
+    parser.add_argument('--train_json',     type=str,       help='train json filename', required=True)
+    parser.add_argument('--val_npy',        type=str,       help='val npy filename')
+    parser.add_argument('--val_json',       type=str,       help='val json filename')
+    parser.add_argument('--pred_output',    type=str,       help='prediction file (label, pred) pair on each line')
 
     # Training params
     parser.add_argument('--batch_size',     type=int,       help='batch size', default=8)
@@ -85,12 +75,6 @@ def main():
     batch_size = args.batch_size
     lr = args.lr
 
-    # TODO: Multi-GPU PyTorch Implementation
-    # if args.num_gpus > 1 and torch.cuda.device_count() > 1:
-    #     print("Using {} GPUs!".format(torch.cuda.device_count()))
-    #     model = nn.DataParallel(model, device_ids=[0, 1])
-    # model.to(device)
-
     # Train
     if args.mode == 'train':
         # Setup train log directory
@@ -108,9 +92,8 @@ def main():
         log_file = setup_logs_file(parser, log_dir)
 
         # Dataset & Dataloader
-        train_dataset = VQA_Dataset(os.path.join(args.data_dir, args.train_npy),
-                                        os.path.join(args.data_dir, args.train_json),
-                                        args.tokenizer_name, args.config_name, args.train_memmap_size)
+        train_dataset = ActionDataset(os.path.join(args.data_dir, args.train_json),
+                                      os.path.join(args.data_dir, args.train_npy))
 
         train_loader = torch.utils.data.DataLoader(train_dataset, batch_size, shuffle=True,
                                                    drop_last=True, num_workers=args.num_workers)
@@ -119,9 +102,12 @@ def main():
         print_and_log(log_msg, log_file)
 
         if args.val_json and args.val_npy:
-            val_dataset = VQA_Dataset(os.path.join(args.data_dir, args.val_npy),
-                                      os.path.join(args.data_dir, args.val_json),
-                                      args.tokenizer_name, args.config_name, args.val_memmap_size)
+            # Use the same max video length as in the training dataset
+            max_video_len = train_dataset.max_video_len
+
+            val_dataset = ActionDataset(os.path.join(args.data_dir, args.val_json),
+                                        os.path.join(args.data_dir, args.val_npy),
+                                        max_video_len)
 
             val_loader = torch.utils.data.DataLoader(val_dataset, batch_size, shuffle=True,
                                                      drop_last=True, num_workers=args.num_workers)
@@ -136,16 +122,17 @@ def main():
             print_and_log(log_msg, log_file)
 
         # Build Model
-        encoder_params = {
-            'name': args.tokenizer_name,
-            'config_name_or_dict': args.config_name,
-            'freeze': args.enc_freeze,
-            # TODO: Read from prepare_data.py's output json
-            'video_emb_dim': args.vid_emb_dim,
-            'max_num_frames': args.max_num_frames
+        model_params = {
+            'input_dim': train_dataset.embedding_dim,
+            'num_layers': args.num_layers,
+            'lstm_hidden': 1024,
+            'lstm_dropout': 0.1,
+            'fc_dim': 1024,
+            'num_classes': args.num_cls,
+            # 'max_video_len': max_video_len,
         }
 
-        model = VideoQAMidFuseBaseline(encoder_params)
+        model = BiLSTM(model_params)
         model.to(device)
 
         # Loss & Optimizer
@@ -184,7 +171,6 @@ def main():
             for batch_data in train_loader:
                 # Load to device, for the list of batch tensors
                 batch_data = [d.to(device) for d in batch_data]
-                # TODO
                 inputs, label = batch_data[:-1], batch_data[-1]
 
                 # Forward Pass
@@ -270,11 +256,6 @@ def main():
     # TODO: Test/Inference
     elif args.mode == 'test':
         pass
-
-
-def str2tuple(input_str):
-    # input_str: "xx xx xx"
-    return tuple([int(x) for x in input_str.split()])
 
 
 if __name__ == '__main__':

@@ -10,8 +10,8 @@ Creates the following csv files in the `--out_dir`:
 CSV format:
 `video_name, label_idx`
 
-These csv's are temporary, as we need to run `prepare_data.py`
-to generate the final dataset file (csv).
+The csv files are temporary, as we need to run `prepare_data.py`
+to generate the final dataset file (json).
 
 Also creates a new directory within the `--out_dir`
 for storing video frames, organized as follows:
@@ -61,20 +61,20 @@ def _filename(path):
     return filename
 
 
-def train_val_split(cls_name, video_dir, cls_idx, split_ratio=0.8):
+def train_val_split(label, video_dir, label_idx, split_ratio=0.8):
     """
     For the given video class sub-directory, performs train-val split
     and computes filenames along with class label idx.
 
-    :param str cls_name: class label name
+    :param str label: class label name
     :param str video_dir: video directory
-    :param int cls_idx: class label index
+    :param int label_idx: class label index
     :param split_ratio: train-val set split ratio
     :returns: train & validation lists containing
                 tuples of filenames & class idx
     """
     # Get all files in the given class directory
-    paths = sorted(glob.glob(os.path.join(video_dir, cls_name, '*.avi')))
+    paths = sorted(glob.glob(os.path.join(video_dir, label, '*.avi')))
 
     # Set seed (reproducibility) & shuffle
     np.random.seed(0)
@@ -86,11 +86,11 @@ def train_val_split(cls_name, video_dir, cls_idx, split_ratio=0.8):
     val_paths = paths[split_idx:]
 
     # Extract filenames from paths & also insert the class label index
-    train_fname_cls_idxs = [(_filename(path), cls_idx) for path in train_paths]
-    val_fname_cls_idxs = [(_filename(path), cls_idx) for path in val_paths]
+    train_fname_label_idxs = [(_filename(path), label_idx) for path in train_paths]
+    val_fname_label_idxs = [(_filename(path), label_idx) for path in val_paths]
 
     # E.g.  [['Biking/v_Biking_g01_c01.avi', 12], ...]
-    return train_fname_cls_idxs, val_fname_cls_idxs
+    return train_fname_label_idxs, val_fname_label_idxs
 
 
 def _write_to_csv(fname_cls_idxs, out_file):
