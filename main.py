@@ -6,7 +6,7 @@ import apex.amp as amp
 from time import time
 from torch.utils.data import DataLoader
 from tensorboardX import SummaryWriter
-from dataloader import ActionDataset
+from dataloader import ConvEmbeddingsDataset
 from model import BiLSTM
 from utils import str2bool, print_and_log, setup_logs_file
 from utils import compute_validation_metrics
@@ -92,8 +92,8 @@ def main():
         log_file = setup_logs_file(parser, log_dir)
 
         # Dataset & Dataloader
-        train_dataset = ActionDataset(os.path.join(args.data_dir, args.train_json),
-                                      os.path.join(args.data_dir, args.train_npy))
+        train_dataset = ConvEmbeddingsDataset(os.path.join(args.data_dir, args.train_json),
+                                              os.path.join(args.data_dir, args.train_npy))
 
         train_loader = torch.utils.data.DataLoader(train_dataset, batch_size, shuffle=True,
                                                    drop_last=True, num_workers=args.num_workers)
@@ -105,9 +105,9 @@ def main():
             # Use the same max video length as in the training dataset
             max_video_len = train_dataset.max_video_len
 
-            val_dataset = ActionDataset(os.path.join(args.data_dir, args.val_json),
-                                        os.path.join(args.data_dir, args.val_npy),
-                                        max_video_len)
+            val_dataset = ConvEmbeddingsDataset(os.path.join(args.data_dir, args.val_json),
+                                                os.path.join(args.data_dir, args.val_npy),
+                                                max_video_len)
 
             val_loader = torch.utils.data.DataLoader(val_dataset, batch_size, shuffle=True,
                                                      drop_last=True, num_workers=args.num_workers)

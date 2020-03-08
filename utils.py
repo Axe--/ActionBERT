@@ -129,14 +129,12 @@ def compute_validation_metrics(model, dataloader, device, size):
     """
     model.eval()
     with torch.no_grad():
-        batch_size = dataloader.batch_size
         loss = 0.0
         num_correct = 0
-
-        n_iters = max(1, size // batch_size)
+        total_samples = 0
 
         # Evaluate on mini-batches & then average over the total
-        for i, batch in enumerate(dataloader):
+        for n_iter, batch in enumerate(dataloader):
             # Load to device, for the list of batch tensors
             batch = [d.to(device) for d in batch]
             inputs, label = batch[:-1], batch[-1]
@@ -152,17 +150,17 @@ def compute_validation_metrics(model, dataloader, device, size):
             # Compute Loss
             loss += F.cross_entropy(label_logits, label, reduction='mean')
 
-            if i >= n_iters:
+            batch_size = label_logits.shape[0]
+            total_samples += batch_size
+
+            if total_samples > size:
                 break
 
-        # Total Samples
-        total = n_iters * batch_size
-
         # Final Accuracy
-        accuracy = 100.0 * (num_correct / total)
+        accuracy = 100.0 * (num_correct / total_samples)
 
-        # Final Loss (averaged over mini-batches - n_iters)
-        loss = loss / n_iters
+        # Final Loss (averaged over mini-batches - n_iter)
+        loss = loss / n_iter
 
         metrics = {'accuracy': accuracy, 'loss': loss}
 

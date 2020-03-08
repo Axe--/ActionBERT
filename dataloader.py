@@ -19,7 +19,11 @@ import numpy as np
 import json
 
 
-class ActionDataset(Dataset):
+class ConvEmbeddingsDataset(Dataset):
+    """
+    Loads pre-computed embeddings from ConvNet
+    """
+
     def __init__(self, json_file, embedding_file, max_video_len=False):
         # Parse JSON
         json_data = self._read_json(json_file)
@@ -60,7 +64,7 @@ if __name__ == '__main__':
     jsn = '/home/axe/Datasets/UCF_101/train_1_fps.json'
     npy = '/home/axe/Datasets/UCF_101/train_1_fps_res18.npy'
 
-    dataset = ActionDataset(jsn, npy)
+    dataset = ConvEmbeddingsDataset(jsn, npy)
     print(dataset.__len__())
 
     dataloader = DataLoader(dataset, batch_size=1024)
