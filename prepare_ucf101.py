@@ -8,7 +8,7 @@ Creates the following csv files in the `--out_dir`:
 - val_temp.csv
 
 CSV format:
-`video_filename, class_idx`
+`video_name, label_idx`
 
 These csv's are temporary, as we need to run `prepare_data.py`
 to generate the final dataset file (csv).
@@ -37,10 +37,10 @@ import glob
 from utils import save_video_frames
 
 """
-python3 prepare_ucf101.py 
--v /home/axe/Datasets/UCF_101/videos/ 
--o /home/axe/Datasets/UCF_101/ 
--s 0.8
+python3 prepare_ucf101.py \
+-v /home/axe/Datasets/UCF_101/videos \
+-o /home/axe/Datasets/UCF_101 \
+-s 0.8 -fps 1
 """
 
 
@@ -93,7 +93,7 @@ def train_val_split(cls_name, video_dir, cls_idx, split_ratio=0.8):
     return train_fname_cls_idxs, val_fname_cls_idxs
 
 
-def _list_to_csv(fname_cls_idxs, out_file):
+def _write_to_csv(fname_cls_idxs, out_file):
     """
     Given the filename-class_idx list,
     saves the tuple to csv file.
@@ -105,14 +105,17 @@ def _list_to_csv(fname_cls_idxs, out_file):
     """
     with open(out_file, 'w') as f:
         # Create columns
-        f.write('video_filename, class_idx' + '\n')
+        f.write('video_name' + ',' + 'label_idx' + '\n')
 
         # Append data
         for fname_cls in fname_cls_idxs:
-            filename = fname_cls[0]
             class_idx = fname_cls[1]
+            filename = fname_cls[0]     # e.g. Bike/v_Bike_c5.avi
 
-            f.write(filename + ',' + str(class_idx) + '\n')
+            # Clip out the video extension & parent folder (e.g --> v_Bike_c5)
+            video_name = filename.split('.')[0].split('/')[-1]
+
+            f.write(video_name + ',' + str(class_idx) + '\n')
 
 
 if __name__ == '__main__':
@@ -122,7 +125,7 @@ if __name__ == '__main__':
     parser.add_argument('-v',   '--video_dir',      type=str,       help='input videos directory', required=True)
     parser.add_argument('-o',   '--out_dir',        type=str,       help='contains frame sub-dirs & split set files', required=True)
     parser.add_argument('-s',   '--split_ratio',    type=float,     help='train-val split ratio', default=0.8)
-    parser.add_argument('-fps', '--frame_rate',     type=float,     help='frame-rate (FPS) for sampling videos', default=1)
+    parser.add_argument('-fps', '--frame_rate',     type=int,       help='frame-rate (FPS) for sampling videos', default=1)
 
     args = parser.parse_args()
 
@@ -146,15 +149,6 @@ if __name__ == '__main__':
         train_data += train_fname_cls_idx
         val_data += val_fname_cls_idx
 
-    # Save train & val splits as csv files
-    train_csv = os.path.join(args.out_dir, 'train_temp.csv')
-    val_csv = os.path.join(args.out_dir, 'val_temp.csv')
-
-    _list_to_csv(train_data, train_csv)
-    _list_to_csv(val_data, val_csv)
-
-    print('Train & Validation sets saved in:\n{}\n{}\n'.format(train_csv, val_csv))
-
     # list of tuples - (video_filenames, class_idx)
     dataset = sorted(train_data + val_data)
 
@@ -177,3 +171,12 @@ if __name__ == '__main__':
             print('{} / {}'.format(i, total))
 
     print('Done! Video Frames saved in {}'.format(save_frames_dir))
+
+    # Save train & val splits as csv files
+    train_csv = os.path.join(args.out_dir, 'train_temp_ucf101.csv')
+    val_csv = os.path.join(args.out_dir, 'val_temp_ucf101.csv')
+
+    _write_to_csv(train_data, train_csv)
+    _write_to_csv(val_data, val_csv)
+
+    print('Train & Validation sets saved in:\n{}\n{}\n'.format(train_csv, val_csv))
