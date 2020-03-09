@@ -9,7 +9,7 @@ Input CSV Format:
 
 Output JSON Format:
 {
-    'data':
+    'delete':
         [{'video_idx', 'video_name', 'video_length', 'label_idx'}],
 
     'memmap_size': tuple[int, int, int]     # (total_videos, max_video_len, emb_dim)
@@ -34,16 +34,15 @@ from PIL import Image
 from torch.utils.data import Dataset, DataLoader
 from torchvision.transforms.transforms import Compose, Resize, ToTensor, Normalize
 from configs import CNN_NAMES, load_cnn
-from utils import plot_images
+from utils import compute_max_frames_len
 
 
 """
-python3 prepare_data.py \
+python3 prepare_data.py -s train \
 -f /home/axe/Datasets/UCF_101/frames_1_fps \
--c /home/axe/Datasets/UCF_101/val_temp.csv \
--j /home/axe/Datasets/UCF_101/val_1_fps.json \
--e /home/axe/Datasets/UCF_101/val_1_fps_res18.npy \
--m resnet18 -bs 512 -nw 4
+-c /home/axe/Datasets/UCF_101/train_temp.csv \
+-o /home/axe/Datasets/UCF_101/processed_fps_1_res18 \
+-m resnet18 -bs 1024 -nw 4
 """
 
 
@@ -60,7 +59,7 @@ class VideoFramesDataset(Dataset):
         Thus, the total len = sum_{i=1:N}(num_frames_in_video_i)
 
         :param str frames_dir: video frames root directory
-        :param pd.DataFrame data_df: data containing frames folder names.
+        :param pd.DataFrame data_df: delete containing frames folder names.
                                         Fields: `video_name, label_idx, num_frames`
         :param transform: image transforms (torchvision.transforms.transforms)
         """
@@ -95,12 +94,12 @@ class VideoFramesDataset(Dataset):
 
         :returns: frame paths & labels
         """
-        # input data
+        # input delete
         video_names = self.df['video_name'].tolist()
         num_frames = self.df['video_length'].tolist()
         label_idxs = self.df['label_idx'].tolist()
 
-        # output data
+        # output delete
         frame_path_list = []
         label_idx_list = []
 
@@ -121,15 +120,19 @@ def _count_frames(folder, root_dir):
 
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description='Prepare data for Action Recognition')
+    parser = argparse.ArgumentParser(description='Prepare delete for Action Recognition')
 
     # Dataset params
-    parser.add_argument('-f',   '--frames_dir',     type=str,   help='input frames directory', required=True)
+    parser.add_argument('-f',   '--frames_dir',     type=str,   help='input frames root directory', required=True)
     parser.add_argument('-c',   '--csv_file',       type=str,   help='input train/val temp csv file', required=True)
-    parser.add_argument('-j',   '--json_file',      type=str,   help='output train/val final json', required=True)
-    parser.add_argument('-e',   '--emb_file',       type=str,   help='output embedding file (npy)', required=True)
+    parser.add_argument('-o',   '--out_dir',        type=str,   help='stores processed json & embeddings npy', required=True)
+
+    # Model params
     parser.add_argument('-m',   '--model',          type=str,   help='pre-trained CNN (torchvision.models)', choices=CNN_NAMES)
+    parser.add_argument('-s',   '--split',          type=str,   help='select split', choices=['train', 'val'], required=True)
     parser.add_argument('-bs',  '--batch_size',     type=int,   help='batch size for computing embeddings', default=128)
+
+    # Misc params
     parser.add_argument('-nw',  '--num_workers',    type=int,   help='no. of worker threads for dataloader', default=1)
     parser.add_argument('-g',   '--gpu_id',         type=int,   help='cuda:gpu_id (torch.device)', default=0)
 
@@ -162,7 +165,7 @@ if __name__ == '__main__':
     # dataset = VideoFramesDataset(args.frames_dir, df, Compose([Resize((224, 224)), ToTensor()]))    # for sanity check
 
     # Compute the max sequence length, needed for embedding array - [N, F, D]
-    max_video_len = int(df['video_length'].max())
+    max_video_len = compute_max_frames_len(args.frames_dir)
     total_frames = dataset.__len__()
 
     print('Total Videos: {}  |  Total Frames: {}  |  Max Video length: {}'.
@@ -174,40 +177,48 @@ if __name__ == '__main__':
     model, emb_dim = load_cnn(args.model)
     model.to(device)
 
-    temp_emb_file = args.emb_file.split('.')[0] + '_temp.npy'
-    final_emb_file = args.emb_file
+    # Create output directory
+    if not os.path.exists(args.out_dir):
+        os.makedirs(args.out_dir)
 
-    # Save JSON
+    # Processed JSON (output)
     data = df.to_json(orient='records')     # {'video_idx', 'video_name', 'video_length', 'label_idx'}
     memmap_shape = (total_videos, max_video_len, emb_dim)
 
-    print('Processed json saved at {}'.format(args.json_file))
-
     json_data = dict(data=data,
-                     memmap_shape=memmap_shape)
+                     memmap_shape=memmap_shape,
+                     split=args.split)
 
-    with open(args.json_file, "w") as f:
+    json_file = os.path.join(args.out_dir, args.split + '.json')
+    with open(json_file, "w") as f:
         json.dump(json_data, f)
 
+    print('Processed json saved at {}'.format(json_file))
+
+    # Embeddings file (output)
+    embeddings_file = os.path.join(args.out_dir, args.split + '.npy')
+    emb_temp_file = os.path.join(args.out_dir, args.split + '_temp.npy')
+
     # Embeddings [num_videos * frames_per_video, emb_dim]
-    embeddings_temp = np.memmap(temp_emb_file, 'float32', 'w+', shape=(total_frames, emb_dim))
+    embeddings_temp = np.memmap(emb_temp_file, 'float32', 'w+', shape=(total_frames, emb_dim))
     video_lengths = df['video_length'].tolist()
 
-    i = 0
-    for batch in dataloader:
-        batch_size = batch.shape[0]
-        frames = batch.to(device)
+    with torch.no_grad():
+        i = 0
+        for batch in dataloader:
+            batch_size = batch.shape[0]
+            frames = batch.to(device)
 
-        # Forward pass --> to CPU --> to numpy
-        emb = model(frames).cpu().detach().numpy()      # [batch_size, emb_dim]
+            # Forward pass --> to CPU --> to numpy
+            emb = model(frames).cpu().detach().numpy()      # [batch_size, emb_dim]
 
-        # Add to embeddings file
-        embeddings_temp[i: i+batch_size, :] = emb
+            # Add to embeddings file
+            embeddings_temp[i: i+batch_size, :] = emb
 
-        i += batch_size
+            i += batch_size
 
     # Reshape the embeddings array
-    embeddings_final = np.memmap(final_emb_file, 'float32', 'w+', shape=memmap_shape)
+    embeddings_final = np.memmap(embeddings_file, 'float32', 'w+', shape=memmap_shape)
 
     j = 0
     for video_idx, video_len in enumerate(video_lengths):
@@ -216,8 +227,8 @@ if __name__ == '__main__':
         j += video_len
 
     # Delete the temp file
-    os.remove(temp_emb_file)
+    os.remove(emb_temp_file)
 
-    print('The embeddings memmap file saved at {}'.format(final_emb_file))
+    print('The embeddings memmap file saved at {}'.format(embeddings_file))
 
     print('Total execution time {:.2f} secs'.format(time() - start_time))

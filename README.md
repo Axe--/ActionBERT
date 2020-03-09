@@ -1,56 +1,144 @@
 # ActionBERT
-Transformer for Action Recognition in PyTorch
+### Is Attention All That We Need?
 
-This repo will serve as a playground where I investigate different approaches to solving the problem of action recognition in video.
+Investigating Transformers for Action Recognition
 
-I will mainly use the [UCF-101 dataset](https://www.crcv.ucf.edu/data/UCF101.php).
 
-<p align="center">
-    <img src="assets/crawling.gif" width="400"\>
-</p>
+>The aim of this work is to understand the sequence modelling capabilities 
+of transformer models (BERT-like) for continuous inputs such as videos, unlike
+language where we have discrete vocabulary.
 
-## Setup
+> PyTorch implementation
 
+---
+
+
+## Table of Contents
+
+> The project comprises of the following sections.
+- [Dataset](#dataset)
+- [Architecture](#architecture)
+- [Training](#training)
+- [Inference](#inference)
+
+---
+
+## Dataset
+
+Given the path to [UCF-101's](https://www.crcv.ucf.edu/data/UCF101.php) 
+raw dataset folder, generates a json file & embeddings file in the following format:
+
+<b>Processed dataset</b>
+```json
+{
+  "data": [
+            {
+                "video_idx": "int",
+                "video_name": "str",
+                "video_length": "int",
+                "label_idx": "int"
+            }
+         ],
+  "memmap_size": "(total_videos, max_video_len, emb_dim)" ,    
+  "split": "str"
+}
 ```
-$ cd data/              
-$ bash download_ucf101.sh     # Downloads the UCF-101 dataset (~7.2 GB)
-$ unrar x UCF101.rar          # Unrars dataset
-$ unzip ucfTrainTestlist.zip  # Unzip train / test split
-$ python3 extract_frames.py   # Extracts frames from the video (~26.2 GB, go grab a coffee for this)
+The `video_idx` refers to the 0<sup>th</sup> axis of the embeddings array.
+
+<b>Embeddings</b>
+```
+np.array(shape=[total_videos, max_video_len, emb_dim])
 ```
 
-## ConvLSTM
+Generate the train & validation set json files.
 
-The only approach investigated so far. Enables action recognition in video by a bi-directional LSTM operating on frame embeddings extracted by a pre-trained ResNet-152 (ImageNet).
-
-The model is composed of:
-* A convolutional feature extractor (ResNet-152) which provides a latent representation of video frames
-* A bi-directional LSTM classifier which based on the latent representation of the video predicts the activity depicted
-
-I have made a trained model available [here](https://drive.google.com/open?id=1GlpN0m9uLbI9dg1ARbW9hDEf-VWe4Asl).
-
-### Train  
-
-```
-$ python3 train.py  --dataset_path data/UCF-101-frames/ \
-                    --split_path data/ucfTrainTestlist \
-                    --num_epochs 200 \
-                    --sequence_length 40 \
-                    --img_dim 112 \
-                    --latent_dim 512
+```bash
+$ python3 prepare_ucf101.py \
+-v /home/axe/Datasets/UCF_101/videos \
+-o /home/axe/Datasets/UCF_101 \
+-s 0.8 -fps 1
 ```
 
-### Test on Video
+The outputs are the ... (temp csv & frame images)
 
+```bash
+$ python3 prepare_data.py -s train \
+-f /home/axe/Datasets/UCF_101/frames_1_fps \
+-c /home/axe/Datasets/UCF_101/train_temp.csv \
+-o /home/axe/Datasets/UCF_101/processed_fps_1_res18 \
+-m resnet18 -bs 1024 -nw 4
 ```
-$ python3 test_on_video.py  --video_path data/UCF-101/SoccerPenalty/v_SoccerPenalty_g01_c01.avi \
-                            --checkpoint_model model_checkpoints/ConvLSTM_150.pth
+
+Stores the dataset file (json) & embeddings file (npy) in the 
+ output directory `-o`, for the given split set `-c`<br>
+
+---
+## Architecture
+
+
+### BiLSTM
+
+
+- Pre-Trained Conv + LSTM
+
+- End-to-End Conv + LSTM
+
+<br>
+
+
+### Transformer
+
+
+- Pre-Trained Conv + Transformer
+
+- End-to-End Conv + Transformer?
+
+
+<br>
+
+---
+
+## Training
+
+Run the following script for training:
+
+```bash
+$ python3 main.py --mode train --expt_dir ./results_log  \
+--expt_name BERT --model bert \
+--data_dir ~/Datasets/UCF_101/processed_fps_1_res18 \
+--run_name res18_1fps_lyr_1_bs_256_lr_1e4 \
+--num_layers 1 --batch_size 256 --epochs 300 \
+--gpu_id 1 --opt_lvl 1  --num_workers 4 --lr 1e-4
 ```
+Specify `--model_ckpt` (filename.pth) to load model checkpoint from disk <i>(resume training/inference)</i> <br>
 
-<p align="center">
-    <img src="assets/penalty.gif" width="400"\>
-</p>
+Select the architecture by using `--model` ('bilstm', 'bert', 'roberta'). <br>
 
-### Results
+For pre-trained transformers see this 
+<a href="https://huggingface.co/transformers/pretrained_models.html"> link. </a> <br>
 
-The model reaches a classification accuracy of **91.27%** accuracy on a randomly sampled test set, composed of 20% of the total amount of video sequences from UCF-101. Will re-train this model on the offical train / test splits and post results as soon as I have time.
+> *Note*: ...
+
+
+### Inference 
+
+- **....**
+
+
+---
+
+<br>
+
+UCF-101 Dataset            | `  
+:-------------------------:|:-------------------------:
+![Crawling](assets/crawling.gif)  |  ![Penalty](assets/penalty.gif)
+
+<br>
+---
+
+> *TODO*: ....
+
+
+- [x] With Pre-Trained (Train+Val)
+- [ ] End-to-End (Train+Val)
+- [ ] ..

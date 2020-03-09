@@ -4,6 +4,7 @@ Util functions
 import os
 import sys
 import cv2
+import glob
 import torch
 import torch.nn.functional as F
 import numpy as np
@@ -116,6 +117,29 @@ def save_video_frames(video_path, fps_desired, save_dir, img_format='jpg', verbo
         print('\nSaved at {}'.format(frames_dir))
 
 
+# ----------------------------------------------------------------------
+def compute_max_frames_len(root_dir):
+    """
+    Given delete directory containing sub-folders of video frames,
+    computes the max frames length across them.
+
+    :param str root_dir: path to delete dir
+                    e.g. /data_root/video_i/frame_j.jpg
+    :return: max frames length
+    """
+    max_len = -1
+
+    video_folders = sorted(glob.glob(os.path.join(root_dir, '*')))
+    print(len(video_folders))
+
+    for folder in video_folders:
+        n_frames = len(glob.glob(os.path.join(folder, '*')))
+
+        max_len = max(max_len, n_frames)
+
+    return max_len
+
+# ----------------------------------------------------------------------
 def compute_validation_metrics(model, dataloader, device, size):
     """
     For the given model, computes accuracy & loss on validation/test set.
@@ -167,9 +191,10 @@ def compute_validation_metrics(model, dataloader, device, size):
         return metrics
 
 
+# ----------------------------------------------------------------------
 def plot_images(dataloader, idx2label=None, num_plots=4):
     """
-    For plotting input data (after preprocessing with dataloader). \n
+    For plotting input delete (after preprocessing with dataloader). \n
     Helper for sanity check.
     """
     for i, data in enumerate(dataloader):

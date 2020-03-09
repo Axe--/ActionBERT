@@ -97,4 +97,112 @@ def load_cnn(name, is_pretrained=True, num_cls=-1):
     return model, emb_dim
 
 
-# TODO:: Add Common Argparse options
+def load_tokenizer(name, config_name_or_dict):
+    """
+    Loads transformer tokenizer
+    """
+    tokenizer_dict = {'bert': BertTokenizer,
+                      'roberta': RobertaTokenizer,
+                      'albert': AlbertTokenizer,
+                      'distilbert': DistilBertTokenizer}
+
+    if type(config_name_or_dict) == dict:
+        tokenizer = tokenizer_dict[name].from_dict(config_name_or_dict)
+
+    elif type(config_name_or_dict) == str:
+        tokenizer = tokenizer_dict[name].from_pretrained(config_name_or_dict)
+
+    else:
+        print(type(config_name_or_dict))
+        raise TypeError("The configs param can either be of str or dict dtype!")
+
+    return tokenizer
+
+
+def load_config(name, config_name_or_dict):
+    """
+    Loads transformer config
+
+    :param str name: transformer model name (e.g bert, roberta, etc)
+    :param config_name_or_dict: either pre-trained config name or custom params dict
+    :type config_name_or_dict: str or dict
+    :return: config object
+    """
+    configs_dict = {'bert': BertConfig,
+                    'roberta': RobertaConfig,
+                    'albert': AlbertConfig,
+                    'distilbert': DistilBertConfig}
+
+    if type(config_name_or_dict) == dict:
+        config = configs_dict[name](**config_name_or_dict)
+
+    elif type(config_name_or_dict) == str:
+        config = configs_dict[name].from_pretrained(config_name_or_dict)
+
+    else:
+        raise TypeError("The configs param can either be of str or dict dtype!")
+
+    return config
+
+
+def load_embedding_fn(name, config_name_or_dict):
+    """
+    Load the Embedding function
+    (Used for mapping token IDs --> Embeddings)
+
+    The Embedding function internally requires
+    the following config params:
+
+    `vocab_size, hidden_size, type_vocab_size, max_position_embeddings,
+    layer_norm_eps, hidden_dropout_prob`
+
+    :param str name: model name (e.g. bert, roberta)
+    :param config_name_or_dict: config pre-trained config name or custom params
+    :type config_name_or_dict: str or dict
+    """
+    embedding_fn_dict = {'bert': BertEmbeddings,
+                         'roberta': RobertaEmbeddings,
+                         'albert': AlbertEmbeddings,
+                         'distilbert': DistillBertEmbeddings}
+
+    # Load the config object
+    config = load_config(name, config_name_or_dict)
+
+    # Initialize the embedding function using the config
+    embedding_fn = embedding_fn_dict[name](config)
+
+    return embedding_fn
+
+
+def load_model(name, config_dict=None, config_name='bert-base-uncased', use_pretrained=False):
+    """
+    Loads transformer model
+
+    :param str name: transformer model name
+    :param dict config_dict: custom config params dict
+    :param str config_name: pre-trained model config name
+    :param bool use_pretrained: flag for using pre-trained transformer
+    :return: transformer model from HuggingFace
+    """
+    model_dict = {'bert': BertModel,
+                  'roberta': RobertaModel,
+                  'albert': AlbertModel,
+                  'distilbert': DistilBertModel}
+
+    if use_pretrained:
+        if config_dict:
+            # Load BertConfig from the custom configs dict
+            config = load_config(name, config_dict)
+
+            model = model_dict[name].from_pretrained(config_name, config=config)
+
+        else:
+            model = model_dict[name].from_pretrained(config_name)
+
+    else:
+        model = model_dict[name](config_dict)
+
+    return model
+
+
+# TODO:: Add Common ArgParse options

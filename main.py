@@ -6,17 +6,16 @@ import apex.amp as amp
 from time import time
 from torch.utils.data import DataLoader
 from tensorboardX import SummaryWriter
-from dataloader import ConvEmbeddingsDataset
-from model import BiLSTM
+from dataloader import BiLSTMDataset, TransformerDataset
+from model import BiLSTM, Transformer
 from utils import str2bool, print_and_log, setup_logs_file
 from utils import compute_validation_metrics
 
 """
 Train + Val:
-python3 main.py --mode train --expt_dir /home/axe/Projects/ActionBERT/results_log \
---expt_name BiLSTM --model bilstm --data_dir /home/axe/Datasets/UCF_101/ --train_npy train_1_fps_res18.npy \
---train_json train_1_fps.json --val_npy val_1_fps_res18.npy --val_json val_1_fps.json \
---num_layers 1 --batch_size 8 --epochs 1 --gpu_id 1 --opt_lvl 1 --run_name demo --num_workers 1
+python3 main.py --mode train --expt_dir ./results_log  --expt_name BERT --model bert \
+--data_dir ~/Datasets/UCF_101/processed_fps_1_res18 --run_name res18_1fps_lyr_1_bs_256_lr_1e4 \
+--num_layers 1 --batch_size 256 --epochs 300 --gpu_id 1 --opt_lvl 1  --num_workers 4 --lr 1e-4
 
 Test:
 """
@@ -33,16 +32,14 @@ def main():
 
     # Model params
     parser.add_argument('--model',          type=str,       help='RNN vs Transformer', required=True, choices=['bilstm', 'bert'])
+    parser.add_argument('--config_name',    type=str,       help='transformers pre-trained config name', default='bert-base-uncased')
+    parser.add_argument('--use_pretrained', type=str2bool,  help='use pre-trained transformer', default='true')
     parser.add_argument('--num_layers',     type=int,       help='no. of layers in the RNN/Transformer', default=1)
-    parser.add_argument('--num_cls',        type=int,       help='no. of classes (for UCF-101)', default=101)
+    parser.add_argument('--num_cls',        type=int,       help='no. of class labels', default=101)
     parser.add_argument('--model_ckpt',     type=str,       help='resume train / perform inference; e.g. model_100.pth')
 
     # Data params
-    parser.add_argument('--data_dir',       type=str,       help='root dir containing all data files', required=True)
-    parser.add_argument('--train_npy',      type=str,       help='train npy filename', required=True)
-    parser.add_argument('--train_json',     type=str,       help='train json filename', required=True)
-    parser.add_argument('--val_npy',        type=str,       help='val npy filename')
-    parser.add_argument('--val_json',       type=str,       help='val json filename')
+    parser.add_argument('--data_dir',       type=str,       help='root dir containing all delete files', required=True)
     parser.add_argument('--pred_output',    type=str,       help='prediction file (label, pred) pair on each line')
 
     # Training params
@@ -52,6 +49,7 @@ def main():
     parser.add_argument('--log_interval',   type=int,       help='interval size for logging training summaries', default=100)
     parser.add_argument('--save_interval',  type=int,       help='save model after `n` weight update steps', default=1000)
     parser.add_argument('--val_size',       type=int,       help='validation set size for evaluating accuracy', default=2000)
+    parser.add_argument('--use_val',        type=str2bool,  help='use validation set & metrics', default='true')
 
     # GPU params
     parser.add_argument('--gpu_id',         type=int,       help='cuda:gpu_id (0,1,2,..) if num_gpus = 1', default=0)
@@ -70,7 +68,7 @@ def main():
     torch.cuda.set_device(device)
     # torch.cuda.get_device_properties(device).total_memory  # in Bytes
 
-    # Train vars
+    # Train params
     n_epochs = args.epochs
     batch_size = args.batch_size
     lr = args.lr
@@ -92,47 +90,45 @@ def main():
         log_file = setup_logs_file(parser, log_dir)
 
         # Dataset & Dataloader
-        train_dataset = ConvEmbeddingsDataset(os.path.join(args.data_dir, args.train_json),
-                                              os.path.join(args.data_dir, args.train_npy))
+        dataset_configs, Dataset = init_dataset_configs(args.model, args)
 
-        train_loader = torch.utils.data.DataLoader(train_dataset, batch_size, shuffle=True,
-                                                   drop_last=True, num_workers=args.num_workers)
+        train_dataset = Dataset(os.path.join(args.data_dir, 'train.json'),
+                                os.path.join(args.data_dir, 'train.npy'),
+                                **dataset_configs)
+
+        train_loader = DataLoader(train_dataset, batch_size, shuffle=True, drop_last=True, num_workers=args.num_workers)
 
         log_msg = 'Train Data Size: {}\n'.format(train_dataset.__len__())
         print_and_log(log_msg, log_file)
 
-        if args.val_json and args.val_npy:
+        # Configs inferred from dataset
+        input_dim = train_dataset.embedding_dim
+        max_video_len = train_dataset.max_video_len
+
+        if args.use_val:
             # Use the same max video length as in the training dataset
-            max_video_len = train_dataset.max_video_len
+            dataset_configs['max_video_len'] = max_video_len
 
-            val_dataset = ConvEmbeddingsDataset(os.path.join(args.data_dir, args.val_json),
-                                                os.path.join(args.data_dir, args.val_npy),
-                                                max_video_len)
+            val_dataset = Dataset(os.path.join(args.data_dir, 'val.json'),
+                                  os.path.join(args.data_dir, 'val.npy'),
+                                  **dataset_configs)
 
-            val_loader = torch.utils.data.DataLoader(val_dataset, batch_size, shuffle=True,
-                                                     drop_last=True, num_workers=args.num_workers)
+            val_loader = DataLoader(val_dataset, batch_size, shuffle=True, drop_last=True, num_workers=args.num_workers)
+
             # Total validation set size
-            val_size = val_dataset.__len__()
-            log_msg = 'Validation Data Size: {}\n'.format(val_size)
+            val_total_size = val_dataset.__len__()
+            log_msg = 'Validation Data Size: {}\n'.format(val_total_size)
 
             # Min of the total & subset size
-            val_used_size = min(val_size, args.val_size)
-            log_msg += 'Validation Accuracy is computed using {} samples. See --val_size\n'.format(val_used_size)
+            val_size = min(val_total_size, args.val_size)
+            log_msg += 'Validation Accuracy is computed using {} samples. See --val_size\n'.format(val_size)
 
             print_and_log(log_msg, log_file)
 
         # Build Model
-        model_params = {
-            'input_dim': train_dataset.embedding_dim,
-            'num_layers': args.num_layers,
-            'lstm_hidden': 1024,
-            'lstm_dropout': 0.1,
-            'fc_dim': 1024,
-            'num_classes': args.num_cls,
-            # 'max_video_len': max_video_len,
-        }
+        model_configs, Model = init_model_configs(args.model, args, input_dim, max_video_len)
 
-        model = BiLSTM(model_params)
+        model = Model(model_configs, device)
         model.to(device)
 
         # Loss & Optimizer
@@ -190,8 +186,8 @@ def main():
                 # Print Results - Loss value & Validation Accuracy
                 if curr_step % args.log_interval == 0 or curr_step == 1:
                     # Validation set accuracy
-                    if args.val_npy and args.val_json:
-                        validation_metrics = compute_validation_metrics(model, val_loader, device, val_used_size)
+                    if args.use_val:
+                        validation_metrics = compute_validation_metrics(model, val_loader, device, val_size)
 
                         # Reset the mode to training
                         model.train()
@@ -236,7 +232,7 @@ def main():
                 curr_step += 1
 
             # Validation set accuracy on the entire set
-            if args.val_npy and args.val_json:
+            if args.use_val:
                 # Total validation set size
                 total_validation_size = val_dataset.__len__()
                 validation_metrics = compute_validation_metrics(model, val_loader, device, total_validation_size)
@@ -256,6 +252,57 @@ def main():
     # TODO: Test/Inference
     elif args.mode == 'test':
         pass
+
+
+def init_dataset_configs(model_name, args):
+    """
+    Given model, sets up the dataset config & class.
+
+    :param model_name: e.g. bilstm, bert, etc.
+    :return: config dict & dataset class
+    """
+    config = {'max_video_len': None}    # inferred from train_dataset
+
+    # If transformer, insert additional configs
+    if 'bert' in model_name:
+        config['model_name'] = args.model
+        config['tok_config'] = args.config_name
+
+    # Setup the Dataset class
+    Dataset = TransformerDataset if 'bert' in model_name else BiLSTMDataset
+
+    return config, Dataset
+
+
+def init_model_configs(model_name, args, input_dim, max_video_len):
+    """
+    Given model, sets up the model config & class.
+
+    :param model_name: e.g. bilstm, bert, etc.
+    :return: config dict & model class
+    """
+
+    if model_name == 'bilstm':
+        config = {'input_dim': input_dim,
+                  'num_layers': args.num_layers,
+                  'lstm_hidden': 1024,
+                  'lstm_dropout': 0.1,
+                  'fc_dim': 1024,
+                  'num_classes': args.num_cls}
+        Model = BiLSTM
+
+    else:
+        config = {'input_dim': input_dim,
+                  'model_name': model_name,
+                  'config_name': args.config_name,
+                  'config_dict': dict(num_hidden_layers=args.num_layers),
+                  'use_pretrained': args.use_pretrained,
+                  'max_video_len': max_video_len,
+                  'fc_dim': 1024,
+                  'num_classes': args.num_cls}
+        Model = Transformer
+
+    return config, Model
 
 
 if __name__ == '__main__':

@@ -1,0 +1,4 @@
+del*.py
+del*
+*.pyc
+results_log

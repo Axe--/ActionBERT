@@ -107,7 +107,7 @@ def _write_to_csv(fname_cls_idxs, out_file):
         # Create columns
         f.write('video_name' + ',' + 'label_idx' + '\n')
 
-        # Append data
+        # Append delete
         for fname_cls in fname_cls_idxs:
             class_idx = fname_cls[1]
             filename = fname_cls[0]     # e.g. Bike/v_Bike_c5.avi
@@ -153,7 +153,7 @@ if __name__ == '__main__':
     dataset = sorted(train_data + val_data)
 
     # Parse videos & save frames to disk
-    save_frames_dir = os.path.join(args.out_dir, 'frames_{}_fps'.format(args.frame_rate))
+    save_frames_dir = os.path.join(args.out_dir, 'frames_fps_{}'.format(args.frame_rate))
 
     if not os.path.exists(save_frames_dir):
         os.makedirs(save_frames_dir)
