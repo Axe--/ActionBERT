@@ -1,44 +1,31 @@
 """
-Given path to UCF dataset's video directory, performs train-val split (saved as csv),
+Given path to UCF dataset's video directory, performs train-val split (saved as json),
 and computes video frames to disk, for the given frame-rate.
 
-Creates the following csv files in the `--out_dir`:
+Creates the following json files in the `--out_dir`:
 
-- train_temp.csv
-- val_temp.csv
+- train_ucf101.json
+- val_ucf101.json
 
-CSV format:
+JSON format:
 `video_name, label_idx`
 
-The csv files are temporary, as we need to run `prepare_data.py`
-to generate the final dataset file (json).
+The json files are generated as an intermediate step to obtain dataset in standard format;
+we run `prepare_data.py` to generate the final dataset file (json).
 
-Also creates a new directory within the `--out_dir`
-for storing video frames, organized as follows:
-
-├── out_dir
-    │
-    └── frames
-        │
-        ├── video_1
-        │    ├── frame_1.jpg
-        │    │   ...
-        │    └── frame_n.jpg
-        │
-        └── video_k
-             ├── frame_1.jpg
-             │   ...
-             └── frame_m.jpg
+Also stores the video frames in `--out_dir`.
 """
-import numpy as np
-import argparse
+
 import os
 import glob
+import argparse
+import numpy as np
+import pandas as pd
 from utils import save_video_frames
 
 """
 python3 prepare_ucf101.py \
--v /home/axe/Datasets/UCF_101/videos \
+-v /home/axe/Datasets/UCF_101/raw/videos \
 -o /home/axe/Datasets/UCF_101 \
 -s 0.8 -fps 1
 """
@@ -93,6 +80,7 @@ def train_val_split(label, video_dir, label_idx, split_ratio=0.8):
     return train_fname_label_idxs, val_fname_label_idxs
 
 
+# ** Deprecated **
 def _write_to_csv(fname_cls_idxs, out_file):
     """
     Given the filename-class_idx list,
@@ -118,8 +106,28 @@ def _write_to_csv(fname_cls_idxs, out_file):
             f.write(video_name + ',' + str(class_idx) + '\n')
 
 
+def _write_to_json(fname_label_list, out_file):
+    """
+    Given the filename-class_idx list,
+    saves the tuple to csv file.
+
+    :param fname_label_list: (filename, label_idx) tuples <br>
+                    e.g. (Bike/v_Bike_c5.avi, 24)
+    :type fname_label_list: list[tuple[str, int]]
+
+    :param str out_file: path to output json file
+    """
+    df = pd.DataFrame(fname_label_list, columns=['video_name', 'label_idx'])
+
+    # Clip out the video extension & parent folder (e.g --> v_Bike_c5)
+    df['video_name'] = df['video_name'].apply(lambda fname: fname.split('.')[0].split('/')[-1])
+
+    # Save as json
+    df.to_json(out_file, orient='records')
+
+
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description='')
+    parser = argparse.ArgumentParser(description='Prepares UCF-101 dataset: video to frames & train-val split')
 
     # Dataset params
     parser.add_argument('-v',   '--video_dir',      type=str,       help='input videos directory', required=True)
@@ -149,6 +157,15 @@ if __name__ == '__main__':
         train_data += train_fname_cls_idx
         val_data += val_fname_cls_idx
 
+    # Save train & val splits as json files
+    train_file = os.path.join(args.out_dir, 'train_ucf101.json')
+    val_file = os.path.join(args.out_dir, 'val_ucf101.json')
+
+    _write_to_json(train_data, train_file)
+    _write_to_json(val_data, val_file)
+
+    print('Train & Validation sets saved in:\n{}\n{}\n'.format(train_file, val_file))
+
     # list of tuples - (video_filenames, class_idx)
     dataset = sorted(train_data + val_data)
 
@@ -171,12 +188,3 @@ if __name__ == '__main__':
             print('{} / {}'.format(i, total))
 
     print('Done! Video Frames saved in {}'.format(save_frames_dir))
-
-    # Save train & val splits as csv files
-    train_csv = os.path.join(args.out_dir, 'train_temp_ucf101.csv')
-    val_csv = os.path.join(args.out_dir, 'val_temp_ucf101.csv')
-
-    _write_to_csv(train_data, train_csv)
-    _write_to_csv(val_data, val_csv)
-
-    print('Train & Validation sets saved in:\n{}\n{}\n'.format(train_csv, val_csv))

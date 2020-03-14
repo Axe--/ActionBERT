@@ -1,15 +1,14 @@
 """
-Given the processed UCF-101 train/val set csv,
-inserts the video-index & no. of frames to
-each row (video_filename, class_label_idx)
-and saves as json
+Given the processed training/validation set JSON,
+for each row (video_name, label_idx) in the input file,
+inserts the video-index & no. of frames, and saves as json.
 
-Input CSV Format:
-`video_name, label_idx`
+Input JSON Format:
+[{'video_name', 'label_idx'}]
 
 Output JSON Format:
 {
-    'delete':
+    'data':
         [{'video_idx', 'video_name', 'video_length', 'label_idx'}],
 
     'memmap_size': tuple[int, int, int]     # (total_videos, max_video_len, emb_dim)
@@ -30,6 +29,7 @@ import numpy as np
 import pandas as pd
 import torch
 from time import time
+from tqdm import tqdm
 from PIL import Image
 from torch.utils.data import Dataset, DataLoader
 from torchvision.transforms.transforms import Compose, Resize, ToTensor, Normalize
@@ -40,8 +40,8 @@ from utils import compute_max_frames_len
 """
 python3 prepare_data.py -s train \
 -f /home/axe/Datasets/UCF_101/frames_1_fps \
--c /home/axe/Datasets/UCF_101/train_temp.csv \
--o /home/axe/Datasets/UCF_101/processed_fps_1_res18 \
+-j /home/axe/Datasets/UCF_101/train_ucf101.json \
+-o /home/axe/Datasets/UCF_101/data_res18_fps_1 \
 -m resnet18 -bs 1024 -nw 4
 """
 
@@ -59,7 +59,7 @@ class VideoFramesDataset(Dataset):
         Thus, the total len = sum_{i=1:N}(num_frames_in_video_i)
 
         :param str frames_dir: video frames root directory
-        :param pd.DataFrame data_df: delete containing frames folder names.
+        :param pd.DataFrame data_df: data containing frames folder names.
                                         Fields: `video_name, label_idx, num_frames`
         :param transform: image transforms (torchvision.transforms.transforms)
         """
@@ -68,7 +68,7 @@ class VideoFramesDataset(Dataset):
         self.transform = transform
 
         # Setup dataset (frame-path, label)
-        self.frame_paths, self.labels = self.setup_data()
+        self.frame_paths, self.labels = self._setup_data()
 
         # No. of frames per video
         self.num_frames = self.df['video_length'].tolist()
@@ -87,19 +87,19 @@ class VideoFramesDataset(Dataset):
 
         return image
 
-    def setup_data(self):
+    def _setup_data(self):
         """
         Given the video frames directory, compute the
         absolute paths to frames, along with corresponding labels
 
         :returns: frame paths & labels
         """
-        # input delete
+        # input data
         video_names = self.df['video_name'].tolist()
         num_frames = self.df['video_length'].tolist()
         label_idxs = self.df['label_idx'].tolist()
 
-        # output delete
+        # output data
         frame_path_list = []
         label_idx_list = []
 
@@ -120,11 +120,11 @@ def _count_frames(folder, root_dir):
 
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description='Prepare delete for Action Recognition')
+    parser = argparse.ArgumentParser(description='Prepare data for Video Classification')
 
     # Dataset params
     parser.add_argument('-f',   '--frames_dir',     type=str,   help='input frames root directory', required=True)
-    parser.add_argument('-c',   '--csv_file',       type=str,   help='input train/val temp csv file', required=True)
+    parser.add_argument('-j',   '--json_file',      type=str,   help='input train/val json file', required=True)
     parser.add_argument('-o',   '--out_dir',        type=str,   help='stores processed json & embeddings npy', required=True)
 
     # Model params
@@ -147,7 +147,7 @@ if __name__ == '__main__':
     print('Selected Device: {}'.format(device))
 
     # Read csv (video_name, label)
-    df = pd.read_csv(args.csv_file)
+    df = pd.read_json(args.json_file, orient='records')
 
     total_videos = int(df['video_name'].count())
 
@@ -203,7 +203,7 @@ if __name__ == '__main__':
     embeddings_temp = np.memmap(emb_temp_file, 'float32', 'w+', shape=(total_frames, emb_dim))
     video_lengths = df['video_length'].tolist()
 
-    with torch.no_grad():
+    with torch.no_grad(), tqdm(desc='Embeddings', total=len(dataloader)) as progress_bar:
         i = 0
         for batch in dataloader:
             batch_size = batch.shape[0]
@@ -217,7 +217,10 @@ if __name__ == '__main__':
 
             i += batch_size
 
-    # Reshape the embeddings array
+            # update progress
+            progress_bar.update(1)
+
+    # Reshape the embeddings array - (total_videos, max_video_len, emb_dim)
     embeddings_final = np.memmap(embeddings_file, 'float32', 'w+', shape=memmap_shape)
 
     j = 0
