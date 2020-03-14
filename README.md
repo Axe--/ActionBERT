@@ -1,14 +1,14 @@
 # ActionBERT
 ### Is Attention All That We Need?
 
-Investigating Transformers for Action Recognition
+Investigating Transformers for Action Recognition (Video classification)
 
 
 >The aim of this work is to understand the sequence modelling capabilities 
-of transformer models (BERT-like) for continuous inputs such as videos, unlike
-language where we have discrete vocabulary.
+of transformer models (BERT-like) for continuous input spaces such as video frames, unlike
+language where the inputs are discrete (vocabulary).
 
-> PyTorch implementation
+> PyTorch Implementation
 
 ---
 
@@ -26,10 +26,62 @@ language where we have discrete vocabulary.
 ## Dataset
 
 Given the path to [UCF-101's](https://www.crcv.ucf.edu/data/UCF101.php) 
-raw dataset folder, generates a json file & embeddings file in the following format:
+raw dataset folder, prepare the dataset in a standardized format as follows:
+
+```bash
+$ python3 prepare_ucf101.py \
+-v /home/axe/Datasets/UCF_101/raw/videos \
+-o /home/axe/Datasets/UCF_101 \
+-s 0.8 -fps 1
+```
+
+Produces json files for training & validation sets in the following format:
+
+```json5
+[
+  {
+    "video_name": "str",
+    "label_idx": "int",
+  }
+]
+```
+
+Also creates a new directory within the output dir `-o`
+for storing video frames, organized as follows:
+```
+├── out_dir
+    │
+    └── frames
+        │
+        ├── video_1
+        │    ├── frame_1.jpg
+        │    │   ...
+        │    └── frame_n.jpg
+        │
+        └── video_k
+             ├── frame_1.jpg
+             │   ...
+             └── frame_m.jpg
+```
+<br>
+---
+
+Given the above frames dir `-f` & split set json `-j`, 
+produces the final json & embeddings file (npy) in the 
+following format:
+
+```bash
+$ python3 prepare_data.py -s train \
+-f /home/axe/Datasets/UCF_101/frames_1_fps \
+-j /home/axe/Datasets/UCF_101/train_ucf101.json \
+-o /home/axe/Datasets/UCF_101/data_res18_fps_1 \
+-m resnet18 -bs 1024 -nw 4
+```
+
+The files are stored in output dir `-o`. <br>
 
 <b>Processed dataset</b>
-```json
+```json5
 {
   "data": [
             {
@@ -39,7 +91,7 @@ raw dataset folder, generates a json file & embeddings file in the following for
                 "label_idx": "int"
             }
          ],
-  "memmap_size": "(total_videos, max_video_len, emb_dim)" ,    
+  "memmap_size": "tuple(total_videos, max_video_len, emb_dim)",    
   "split": "str"
 }
 ```
@@ -50,27 +102,7 @@ The `video_idx` refers to the 0<sup>th</sup> axis of the embeddings array.
 np.array(shape=[total_videos, max_video_len, emb_dim])
 ```
 
-Generate the train & validation set json files.
 
-```bash
-$ python3 prepare_ucf101.py \
--v /home/axe/Datasets/UCF_101/videos \
--o /home/axe/Datasets/UCF_101 \
--s 0.8 -fps 1
-```
-
-The outputs are the ... (temp csv & frame images)
-
-```bash
-$ python3 prepare_data.py -s train \
--f /home/axe/Datasets/UCF_101/frames_1_fps \
--c /home/axe/Datasets/UCF_101/train_temp.csv \
--o /home/axe/Datasets/UCF_101/processed_fps_1_res18 \
--m resnet18 -bs 1024 -nw 4
-```
-
-Stores the dataset file (json) & embeddings file (npy) in the 
- output directory `-o`, for the given split set `-c`<br>
 
 ---
 ## Architecture
